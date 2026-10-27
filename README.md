@@ -24,14 +24,14 @@ ComfyUI 自定义节点：通过任意 **OpenAI 兼容接口** 调用图生图 /
 选择 **Install via Git URL**，填入本仓库地址：
 
 ```text
-https://github.com/<your-account>/ComfyUI-JMHL-Image-API
+https://github.com/Pick-up-three/ComfyUI-JMHL-Image-API
 ```
 
 ### 手动安装
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/<your-account>/ComfyUI-JMHL-Image-API.git JMHL_Image_API
+git clone https://github.com/Pick-up-three/ComfyUI-JMHL-Image-API.git JMHL_Image_API
 ```
 
 重启 ComfyUI，节点位于 `JMHL API` 分类下。
