@@ -1,0 +1,4 @@
+# torch 由 ComfyUI 自带，不要在这里重复安装
+requests>=2.31
+Pillow>=10.0
+numpy>=1.25

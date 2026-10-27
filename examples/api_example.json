@@ -1,0 +1,37 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input.jpg"
+    }
+  },
+  "2": {
+    "class_type": "PixelAPIImage2Node",
+    "inputs": {
+      "模式": "图生图",
+      "提示词": "把背景替换成纯白色，产品居中完整呈现",
+      "模型名称": "gpt-image-2.5-Sunburst",
+      "API地址": "https://your-relay-host/v1",
+      "API密钥": "YOUR_API_KEY",
+      "宽高比": "1:1",
+      "宽度": 970,
+      "高度": 600,
+      "画质": "auto",
+      "背景": "opaque",
+      "输出格式": "png",
+      "随机种": 0,
+      "超时时间_秒": 300,
+      "额外参数JSON": "{}",
+      "额外请求头JSON": "{}",
+      "自动补充尺寸提示词": true,
+      "图片1": ["1", 0]
+    }
+  },
+  "3": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["2", 0],
+      "filename_prefix": "JMHL_Image_API"
+    }
+  }
+}
