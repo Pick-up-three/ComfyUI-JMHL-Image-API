@@ -13,6 +13,7 @@ import io
 import json
 import os
 import re
+import time
 
 import numpy as np
 import requests
@@ -101,6 +102,17 @@ def _decode_item(item):
     raise ValueError(f"响应条目里没有图像字段：{list(item)}")
 
 
+class _RetryableError(RuntimeError):
+    """单次请求失败，可以重试。"""
+
+
+def _is_blank_image(image, mean_limit=15.0, std_limit=10.0):
+    """接近纯黑且没有纹理的图，视为上游生成失败（拒绝生成/号池失败）。"""
+    rgb = image.convert("RGB")
+    arr = np.asarray(rgb, dtype=np.float32)
+    return float(arr.mean()) <= mean_limit and float(arr.std()) <= std_limit
+
+
 class PixelAPIImage2Node:
     @classmethod
     def INPUT_TYPES(cls):
@@ -160,6 +172,12 @@ class PixelAPIImage2Node:
                 "自动补充尺寸提示词": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "开启后，按宽度/高度或宽高比确定的尺寸，自动在提示词末尾追加尺寸说明。",
+                }),
+                "最大重试次数": ("INT", {
+                    "default": 2,
+                    "min": 0,
+                    "max": 10,
+                    "tooltip": "请求失败（HTTP错误/超时）或返回黑图时，自动重新请求的次数；0 表示不重试。",
                 }),
             },
         }
@@ -233,45 +251,80 @@ class PixelAPIImage2Node:
             "size": request_size,
         }
 
-        if mode == "图生图" and images:
-            endpoint = _normalize_endpoint(base_url, "edits")
-            files = [
-                ("image[]", (f"image_{index}.png", _tensor_to_png(image), "image/png"))
-                for index, image in enumerate(images, start=1)
-            ]
-            data = {
-                key: (value if isinstance(value, str) else str(value))
-                for key, value in common.items()
-            }
-            data.update({
-                str(key): (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
-                for key, value in extra_params.items()
-            })
-            response = requests.post(
-                endpoint, headers=headers, data=data, files=files, timeout=timeout
-            )
-        else:
-            endpoint = _normalize_endpoint(base_url, "generations")
-            payload = dict(common)
-            payload.update(extra_params)
-            response = requests.post(
-                endpoint, headers=headers, json=payload, timeout=timeout
-            )
+        max_retries = int(kwargs.get("最大重试次数", 2) or 0)
+        if max_retries < 0:
+            max_retries = 0
+        total_attempts = max_retries + 1
 
-        status_code = response.status_code
-        if status_code != 200:
-            raise RuntimeError(f"HTTP {status_code}：{response.text[:800]}")
+        last_error = None
+        status_code = 0
+        payload = {}
+        items = []
+        pil_images = []
+        attempts_used = 0
+        blank_retries = 0
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError(f"返回内容不是 JSON：{response.text[:500]}") from exc
+        for attempt in range(1, total_attempts + 1):
+            attempts_used = attempt
+            try:
+                if attempt > 1:
+                    # 重试时自动换种子，避免上游按相同种子再次返回同样的黑图
+                    common["seed"] = seed + (attempt - 1) * 104729
 
-        items = payload.get("data") or []
-        if not items:
-            raise RuntimeError(f"响应里没有 data 数组：{json.dumps(payload, ensure_ascii=False)[:500]}")
+                if mode == "图生图" and images:
+                    endpoint = _normalize_endpoint(base_url, "edits")
+                    files = [
+                        ("image[]", (f"image_{index}.png", _tensor_to_png(image), "image/png"))
+                        for index, image in enumerate(images, start=1)
+                    ]
+                    data = {
+                        key: (value if isinstance(value, str) else str(value))
+                        for key, value in common.items()
+                    }
+                    data.update({
+                        str(key): (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+                        for key, value in extra_params.items()
+                    })
+                    response = requests.post(
+                        endpoint, headers=headers, data=data, files=files, timeout=timeout
+                    )
+                else:
+                    endpoint = _normalize_endpoint(base_url, "generations")
+                    payload = dict(common)
+                    payload.update(extra_params)
+                    response = requests.post(
+                        endpoint, headers=headers, json=payload, timeout=timeout
+                    )
 
-        pil_images = [_decode_item(item) for item in items]
+                status_code = response.status_code
+                if status_code != 200:
+                    raise _RetryableError(f"HTTP {status_code}：{response.text[:800]}")
+
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise _RetryableError(f"返回内容不是 JSON：{response.text[:500]}") from exc
+
+                items = payload.get("data") or []
+                if not items:
+                    raise _RetryableError(
+                        f"响应里没有 data 数组：{json.dumps(payload, ensure_ascii=False)[:500]}"
+                    )
+
+                pil_images = [_decode_item(item) for item in items]
+                if _is_blank_image(pil_images[0]):
+                    blank_retries += 1
+                    raise _RetryableError("上游返回纯黑/空白图")
+                last_error = None
+                break
+            except (_RetryableError, requests.RequestException) as exc:
+                last_error = exc
+                if attempt < total_attempts:
+                    time.sleep(min(2 ** (attempt - 1), 10))
+
+        if last_error is not None:
+            raise RuntimeError(f"请求失败（共尝试 {attempts_used} 次）：{last_error}")
+
         upstream_sizes = [f"{image.size[0]}x{image.size[1]}" for image in pil_images]
 
         resized_images = []
@@ -322,6 +375,10 @@ class PixelAPIImage2Node:
         )
         response_info["resized_locally"] = resized_locally
         response_info["size_hint_appended"] = size_hint_appended
+        response_info["attempts"] = attempts_used
+        response_info["max_attempts"] = total_attempts
+        response_info["blank_retries"] = blank_retries
+        response_info["seed_used"] = common["seed"]
 
         return (
             batch.cpu(),

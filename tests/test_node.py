@@ -16,6 +16,7 @@ mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
 
 captured = []
+responses = []
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -23,8 +24,21 @@ class MockHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or 0)
         body = self.rfile.read(length) if length else b""
         captured.append({"path": self.path, "body": body})
+        index = len(captured) - 1
+        entry = responses[index] if index < len(responses) else ("image", (16, 16), (30, 120, 200))
+
+        if entry[0] == "http":
+            data = json.dumps({"error": {"message": "boom"}}).encode()
+            self.send_response(entry[1])
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        size, color = entry[1], entry[2]
         buf = io.BytesIO()
-        Image.new("RGB", (16, 16), (30, 120, 200)).save(buf, format="PNG")
+        Image.new("RGB", size, color).save(buf, format="PNG")
         payload = {"data": [{"b64_json": base64.b64encode(buf.getvalue()).decode("ascii")}], "created": 1}
         data = json.dumps(payload).encode()
         self.send_response(200)
@@ -40,6 +54,7 @@ class MockHandler(BaseHTTPRequestHandler):
 @pytest.fixture()
 def mock_api():
     captured.clear()
+    responses.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -213,3 +228,58 @@ def test_one_sided_size_rejected():
 
     with pytest.raises(RuntimeError, match="同时填写"):
         node.run(**inputs)
+
+
+def test_retry_after_blank_then_success(mock_api):
+    responses.append(("image", (16, 16), (0, 0, 0)))
+    responses.append(("image", (16, 16), (30, 120, 200)))
+    node = make_node()
+    inputs = base_inputs(mock_api)
+    inputs["最大重试次数"] = 2
+
+    images, urls, info_text, raw, status = node.run(**inputs)
+
+    assert len(captured) == 2
+    assert images.shape == (1, 16, 16, 3)
+    info = json.loads(info_text)
+    assert info["attempts"] == 2
+    assert info["max_attempts"] == 3
+    assert info["blank_retries"] == 1
+
+
+def test_retry_exhausted_blank_raises(mock_api):
+    for _ in range(3):
+        responses.append(("image", (16, 16), (0, 0, 0)))
+    node = make_node()
+    inputs = base_inputs(mock_api)
+    inputs["最大重试次数"] = 2
+
+    with pytest.raises(RuntimeError, match="共尝试 3 次"):
+        node.run(**inputs)
+    assert len(captured) == 3
+
+
+def test_retry_on_http_error(mock_api):
+    responses.append(("http", 500))
+    responses.append(("image", (16, 16), (30, 120, 200)))
+    node = make_node()
+    inputs = base_inputs(mock_api)
+    inputs["最大重试次数"] = 2
+
+    images, urls, info_text, raw, status = node.run(**inputs)
+
+    assert len(captured) == 2
+    assert images.shape == (1, 16, 16, 3)
+    info = json.loads(info_text)
+    assert info["attempts"] == 2
+
+
+def test_no_retry_when_disabled(mock_api):
+    responses.append(("image", (16, 16), (0, 0, 0)))
+    node = make_node()
+    inputs = base_inputs(mock_api)
+    inputs["最大重试次数"] = 0
+
+    with pytest.raises(RuntimeError, match="共尝试 1 次"):
+        node.run(**inputs)
+    assert len(captured) == 1
