@@ -179,6 +179,10 @@ class PixelAPIImage2Node:
                     "max": 10,
                     "tooltip": "请求失败（HTTP错误/超时）或返回黑图时，自动重新请求的次数；0 表示不重试。",
                 }),
+                "本地缩放到目标尺寸": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "开启后，接口返回尺寸与目标不一致时，本地用 Lanczos 缩放到目标尺寸；关闭则保持接口返回的原图。",
+                }),
             },
         }
 
@@ -205,6 +209,12 @@ class PixelAPIImage2Node:
         height = int(kwargs.get("高度", 0) or 0)
         extra_params = _parse_json_object(kwargs.get("额外参数JSON", "{}"), "额外参数JSON")
         extra_headers = _parse_json_object(kwargs.get("额外请求头JSON", "{}"), "额外请求头JSON")
+
+        raw_resize = kwargs.get("本地缩放到目标尺寸", False)
+        if isinstance(raw_resize, str):
+            resize_enabled = raw_resize.strip().lower() not in ("false", "0", "", "none")
+        else:
+            resize_enabled = bool(raw_resize)
 
         if (width > 0) != (height > 0):
             raise RuntimeError("宽度和高度需要同时填写，或都填 0 使用宽高比")
@@ -343,7 +353,7 @@ class PixelAPIImage2Node:
                     target = (max(1, int(round(long_edge * ratio_value))), long_edge)
             target_sizes.append(target)
 
-            if target and image.size != target:
+            if target and resize_enabled and image.size != target:
                 resized_images.append(image.resize(target, Image.LANCZOS))
                 resized_locally = True
             else:
@@ -374,6 +384,7 @@ class PixelAPIImage2Node:
             if target_sizes and target_sizes[0] else ""
         )
         response_info["resized_locally"] = resized_locally
+        response_info["resize_enabled"] = resize_enabled
         response_info["size_hint_appended"] = size_hint_appended
         response_info["attempts"] = attempts_used
         response_info["max_attempts"] = total_attempts

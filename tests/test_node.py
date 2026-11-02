@@ -122,6 +122,7 @@ def test_custom_size_requests_and_resizes(mock_api):
     inputs = base_inputs(mock_api)
     inputs["宽度"] = 64
     inputs["高度"] = 32
+    inputs["本地缩放到目标尺寸"] = True
 
     images, urls, info_text, raw, status = node.run(**inputs)
 
@@ -135,10 +136,26 @@ def test_custom_size_requests_and_resizes(mock_api):
     assert info["resized_locally"] is True
 
 
+def test_resize_disabled_by_default(mock_api):
+    node = make_node()
+    inputs = base_inputs(mock_api)
+    inputs["宽度"] = 64
+    inputs["高度"] = 32
+
+    images, urls, info_text, raw, status = node.run(**inputs)
+
+    assert b"64x32" in captured[0]["body"]
+    assert images.shape == (1, 16, 16, 3)
+    info = json.loads(info_text)
+    assert info["requested_size"] == "64x32"
+    assert info["resized_locally"] is False
+
+
 def test_ratio_mode_scales_to_ratio(mock_api):
     node = make_node()
     inputs = base_inputs(mock_api)
     inputs["宽高比"] = "16:9"
+    inputs["本地缩放到目标尺寸"] = True
 
     images, urls, info_text, raw, status = node.run(**inputs)
 
