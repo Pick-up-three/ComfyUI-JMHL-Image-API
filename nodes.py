@@ -157,6 +157,7 @@ class PixelAPIImage2Node:
                     "min": 0,
                     "max": 0xFFFFFFFFFFFFFFFF,
                     "control_after_generate": True,
+                    "tooltip": "OpenAI Images 接口不支持 seed，本节点不会发送；部分中转站如支持，可用额外参数JSON自行补充。",
                 }),
                 "超时时间_秒": ("INT", {"default": 300, "min": 30, "max": 3600}),
                 "额外参数JSON": ("STRING", {"multiline": True, "default": "{}"}),
@@ -203,7 +204,6 @@ class PixelAPIImage2Node:
         quality = str(kwargs.get("画质", "auto") or "auto")
         background = str(kwargs.get("背景", "opaque") or "opaque")
         output_format = str(kwargs.get("输出格式", "png") or "png")
-        seed = int(kwargs.get("随机种", 0) or 0)
         timeout = int(kwargs.get("超时时间_秒", 300) or 300)
         width = int(kwargs.get("宽度", 0) or 0)
         height = int(kwargs.get("高度", 0) or 0)
@@ -257,7 +257,6 @@ class PixelAPIImage2Node:
             "quality": quality,
             "background": background,
             "output_format": output_format,
-            "seed": seed,
             "size": request_size,
         }
 
@@ -277,10 +276,6 @@ class PixelAPIImage2Node:
         for attempt in range(1, total_attempts + 1):
             attempts_used = attempt
             try:
-                if attempt > 1:
-                    # 重试时自动换种子，避免上游按相同种子再次返回同样的黑图
-                    common["seed"] = seed + (attempt - 1) * 104729
-
                 if mode == "图生图" and images:
                     endpoint = _normalize_endpoint(base_url, "edits")
                     files = [
@@ -389,7 +384,6 @@ class PixelAPIImage2Node:
         response_info["attempts"] = attempts_used
         response_info["max_attempts"] = total_attempts
         response_info["blank_retries"] = blank_retries
-        response_info["seed_used"] = common["seed"]
 
         return (
             batch.cpu(),

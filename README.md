@@ -54,7 +54,7 @@ git clone https://github.com/Pick-up-three/ComfyUI-JMHL-Image-API.git JMHL_Image
 | `画质` | 下拉 | `auto` / `low` / `medium` / `high` / `xhigh` |
 | `背景` | 下拉 | `opaque` / `transparent` / `auto` |
 | `输出格式` | 下拉 | `png` / `jpeg` / `webp` |
-| `随机种` | INT | 随机种子 |
+| `随机种` | INT | 仅前端控件；OpenAI Images 接口无此参数，节点不会发送 |
 | `超时时间_秒` | INT | 单次请求超时，默认 300 |
 | `额外参数JSON` | STRING | 合并进请求参数，同名会覆盖节点字段 |
 | `额外请求头JSON` | STRING | 合并进请求头，可覆盖 `Authorization` |
@@ -105,7 +105,7 @@ git clone https://github.com/Pick-up-three/ComfyUI-JMHL-Image-API.git JMHL_Image
 请求失败（HTTP 错误、超时）或上游返回黑图（平均亮度 ≤15 且标准差 ≤10）时，节点会自动重新请求：
 
 - 默认 2 次（共尝试 3 次），可填 0~10，填 0 表示不重试；
-- 每次重试会自动更换种子，避免上游按相同种子再次返回同样的黑图；
+- 重试会重新发送相同请求（OpenAI Images 接口不支持 `seed` 参数，本节点默认不发送该字段）；
 - 全部尝试失败后节点报错，错误信息注明尝试次数；注意上游可能仍已计费。
 
 ## 接口地址与请求
@@ -118,7 +118,7 @@ https://your-host/v1         -> https://your-host/v1/images/edits
 https://your-host/v1/images/edits -> 原样使用
 ```
 
-- 图生图：POST `/v1/images/edits`，multipart 上传 `image[]`（PNG），字段含 `model`、`prompt`、`n`、`quality`、`background`、`output_format`、`size`、`seed`；
+- 图生图：POST `/v1/images/edits`，multipart 上传 `image[]`（PNG），字段含 `model`、`prompt`、`n`、`quality`、`background`、`output_format`、`size`（不发送 `seed`，OpenAI Images 接口无此参数）；
 - 文生图：POST `/v1/images/generations`，JSON body 同上；
 - 响应支持 `b64_json` 和 `url` 两种格式。
 
